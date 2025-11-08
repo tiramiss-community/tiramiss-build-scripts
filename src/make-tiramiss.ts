@@ -54,7 +54,7 @@ const argv = yargs(hideBin(process.argv))
 	})
 	.option("integrateBranch", {
 		type: "string",
-		default: process.env.INTEGRATE_BRANCH ?? "tiramiss",
+		default: process.env.INTEGRATE_BRANCH ?? ".tiramiss",
 		describe: "Final integration branch name to produce",
 	})
 	.option("toolRepo", {
