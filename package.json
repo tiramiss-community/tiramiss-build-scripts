@@ -9,12 +9,13 @@
 	},
 	"dependencies": {
 		"typescript": "5.9.3",
-		"yargs": "18.0.0"
+		"yargs": "18.0.0",
+		"octokit": "5.0.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.4",
 		"@types/node": "24.10.0",
-		"@types/yargs": "^17.0.34",
+		"@types/yargs": "17.0.34",
 		"vite-node": "5.0.0"
 	}
 }

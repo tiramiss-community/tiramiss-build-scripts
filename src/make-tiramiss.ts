@@ -1,144 +1,71 @@
+/* eslint-disable no-console */
+
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { EOL } from "node:os";
-import yargs from "yargs";
-import { hideBin } from "yargs/helpers";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 
 type Mode = "merge" | "pick" | "squash";
 
-// ================== コマンドライン引数の解析 ==================
+const BASE_REF = process.env.BASE_REF ?? "origin/develop-upstream";
+const WORKING_BRANCH = process.env.WORKING_BRANCH ?? "develop-working";
+const INTEG_BRANCH = process.env.INTEG_BRANCH ?? "tiramiss";
 
-const argv = yargs(hideBin(process.argv))
-	.option("base-ref", {
-		alias: "b",
-		type: "string",
-		description: "触らないベース",
-		default: process.env.BASE_REF ?? "origin/develop",
-	})
-	.option("integrate-branch", {
-		alias: "i",
-		type: "string",
-		description:
-			"組み立て先. 都度force-pushされるので、このブランチに対して直接作業しない事",
-		default: process.env.INTEGRATE_BRANCH ?? "tiramiss",
-	})
-	.option("topics-file", {
-		alias: "t",
-		type: "string",
-		description: "適用順リスト",
-		default: process.env.TOPICS_FILE ?? "topics.txt",
-	})
-	.option("mode", {
-		alias: "m",
-		type: "string",
-		choices: ["merge", "pick", "squash"] as const,
-		description: "統合モード",
-		default: (process.env.MODE as Mode) ?? "merge",
-	})
-	.option("squash-prefix", {
-		type: "string",
-		description: "squash モードでのコミットメッセージプレフィックス",
-		default: process.env.SQUASH_PREFIX ?? "squash",
-	})
-	.option("squash-list-commits", {
-		type: "boolean",
-		description: "squash モードでコミット一覧をメッセージに含めるか",
-		default:
-			process.env.SQUASH_LIST_COMMITS !== undefined
-				? process.env.SQUASH_LIST_COMMITS.toLowerCase() === "true"
-				: true,
-	})
-	.help()
-	.alias("help", "h")
-	.parseSync();
+const TOOL_REPO = process.env.TOOL_REPO ?? ""; // 例: https://github.com/you/tiramiss-build-scripts.git
+const TOOL_REF = process.env.TOOL_REF ?? "HEAD"; // 例: main / v1.2.3 / <commit>
+const TOOL_DIR = process.env.TOOL_DIR ?? "tiramiss"; // 展開先サブディレクトリ
+const PUSH = (process.env.PUSH ?? "true").toLowerCase() === "true";
 
-/** 触らないベース */
-const BASE_REF = argv["base-ref"];
-/** 組み立て先. 都度force-pushされるので、このブランチに対して直接作業しない事 */
-const INTEGRATE_BRANCH = argv["integrate-branch"];
-/** 適用順リスト */
-const TOPICS_FILE = argv["topics-file"];
-/** merge | pick | squash */
-const MODE = argv.mode as Mode;
+const MODE = (process.env.MODE as Mode) ?? "squash"; // merge | pick | squash
+const TOPICS_CANDIDATES = [join(TOOL_DIR, "topics.txt"), "topics.txt"];
 
-// squash 用メッセージ設定
-const SQUASH_PREFIX = argv["squash-prefix"];
-const SQUASH_LIST_COMMITS = argv["squash-list-commits"];
-
-// ================== 子プロセスユーティリティ群 ==================
-
-function run(
-	cmd: string,
-	args: string[],
-	opts: { cwd?: string; quiet?: boolean } = {},
-): Promise<{ code: number; stdout: string; stderr: string }> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(cmd, args, {
-			stdio: ["ignore", "pipe", "pipe"],
-			cwd: opts.cwd,
-		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout.on("data", (d) => {
-			stdout += d.toString();
-			if (!opts.quiet) process.stdout.write(d);
-		});
-		child.stderr.on("data", (d) => {
-			stderr += d.toString();
-			if (!opts.quiet) process.stderr.write(d);
-		});
-		child.on("error", reject);
-		child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
-	});
+function run(cmd: string, args: string[], quiet = false) {
+	return new Promise<{ code: number; out: string; err: string }>(
+		(resolve, reject) => {
+			const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+			let out = "",
+				err = "";
+			p.stdout.on("data", (d) => {
+				const s = d.toString();
+				out += s;
+				if (!quiet) process.stdout.write(s);
+			});
+			p.stderr.on("data", (d) => {
+				const s = d.toString();
+				err += s;
+				if (!quiet) process.stderr.write(s);
+			});
+			p.on("error", reject);
+			p.on("close", (code) => resolve({ code: code ?? 0, out, err }));
+		},
+	);
 }
-
 async function git(args: string[], quiet = false) {
-	const res = await run("git", args, { quiet });
-	if (res.code !== 0) {
-		const msg = `git ${args.join(" ")} failed (${res.code})\n${res.stderr}`;
-		throw new Error(msg);
-	}
-	return res.stdout.trim();
+	const r = await run("git", args, quiet);
+	if (r.code !== 0) throw new Error(`git ${args.join(" ")} failed:\n${r.err}`);
+	return r.out.trim();
 }
-
 async function gitOk(args: string[]) {
-	const res = await run("git", args, { quiet: true });
-	return res.code === 0;
+	return (await run("git", args, true)).code === 0;
 }
-
-async function ensureCleanWorkingTree() {
-	const status = await git(["status", "--porcelain"], true);
-	if (status.trim().length > 0) {
+async function ensureClean() {
+	const s = await git(["status", "--porcelain"], true);
+	if (s.trim())
 		throw new Error(
-			"作業ツリーがクリーンではありません。コミットまたは stash してください。",
+			"作業ツリーがクリーンではありません。コミット or stash してください。",
 		);
-	}
 }
-
-async function revParseCommit(ref: string) {
-	return await git(["rev-parse", "--verify", `${ref}^{commit}`], true);
+async function rev(ref: string) {
+	return git(["rev-parse", "--verify", `${ref}^{commit}`], true);
 }
-
-async function showRefLocalBranch(branch: string) {
-	return await gitOk(["show-ref", "--verify", `refs/heads/${branch}`]);
+async function localBranchExists(n: string) {
+	return gitOk(["show-ref", "--verify", `refs/heads/${n}`]);
 }
-
-async function resolveTopicRef(topic: string): Promise<string> {
-	if (await gitOk(["rev-parse", "--verify", `${topic}^{commit}`])) return topic;
-	for (const cand of [`origin/${topic}`, `upstream/${topic}`]) {
-		if (await gitOk(["rev-parse", "--verify", `${cand}^{commit}`])) return cand;
-	}
-	throw new Error(`見つからないブランチ: ${topic}`);
+async function remoteBranchExists(n: string) {
+	return gitOk(["show-ref", "--verify", `refs/remotes/${n}`]);
 }
-
-function topicLabel(topic: string) {
-	return topic.split("/").pop() ?? topic;
-}
-
 async function mergeBase(a: string, b: string) {
-	return await git(["merge-base", a, b], true);
+	return git(["merge-base", a, b], true);
 }
-
 async function listCommits(base: string, head: string) {
 	const out = await git(
 		["rev-list", "--reverse", "--ancestry-path", `${base}..${head}`],
@@ -146,170 +73,192 @@ async function listCommits(base: string, head: string) {
 	);
 	return out ? out.split("\n").filter(Boolean) : [];
 }
-
-async function readTopics(file: string): Promise<string[]> {
-	if (!existsSync(file)) return [];
-	const raw = readFileSync(file, "utf8");
-	return raw
-		.split(/\r?\n/)
-		.map((l) => l.trim())
-		.filter((l) => l.length > 0 && !l.startsWith("#"));
+function readTopics(): { path: string | null; items: string[] } {
+	for (const p of TOPICS_CANDIDATES) {
+		if (existsSync(p)) {
+			const items = readFileSync(p, "utf8")
+				.split(/\r?\n/)
+				.map((l) => l.trim())
+				.filter((l) => l && !l.startsWith("#"));
+			return { path: p, items };
+		}
+	}
+	return { path: null, items: [] };
+}
+async function resolveTopicRef(topic: string) {
+	if (await gitOk(["rev-parse", "--verify", `${topic}^{commit}`])) return topic;
+	for (const cand of [`origin/${topic}`, `upstream/${topic}`]) {
+		if (await gitOk(["rev-parse", "--verify", `${cand}^{commit}`])) return cand;
+	}
+	throw new Error(`見つからないブランチ: ${topic}`);
 }
 
-// ================== 適用ロジック ==================
-
 async function applyMerge(topic: string) {
-	// 既に取り込み済みか（topic が HEAD の先祖なら取り込み済み）
 	if (await gitOk(["merge-base", "--is-ancestor", topic, "HEAD"])) {
 		console.log(`  • skip (already merged): ${topic}`);
 		return;
 	}
-	console.log(`  • merge --no-ff ${topic}`);
 	await git(["merge", "--no-ff", topic]);
 }
-
-async function applyPick(topic: string) {
-	// 既に取り込み済みならスキップ
+async function applyPick(topic: string, baseRef: string) {
 	if (await gitOk(["merge-base", "--is-ancestor", topic, "HEAD"])) {
 		console.log(`  • skip (already picked): ${topic}`);
 		return;
 	}
-	const baseForTopic = await mergeBase(topic, BASE_REF);
-	if (!baseForTopic)
-		throw new Error(`merge-base 取得に失敗: ${topic} と ${BASE_REF}`);
-	console.log(`  • cherry-pick commits from ${topic} (since ${baseForTopic})`);
-	const commits = await listCommits(baseForTopic, topic);
-	if (commits.length === 0) {
-		console.log("    (no commits to pick)");
+	const base = await mergeBase(topic, baseRef);
+	if (!base) throw new Error(`merge-base 取得失敗: ${topic} vs ${baseRef}`);
+	const commits = await listCommits(base, topic);
+	if (!commits.length) {
+		console.log("   (no commits to pick)");
 		return;
 	}
 	for (const c of commits) {
-		const short = await git(["rev-parse", "--short", c], true);
-		const subj = await git(["show", "-s", "--format=%s", c], true);
-		console.log(`    - pick ${short} ${subj}`);
-		try {
-			await git(["cherry-pick", "-x", c]);
-		} catch {
+		await git(["cherry-pick", "-x", c]).catch(() => {
 			throw new Error(
-				`cherry-pick コンフリクト。解決後 'git add -A && git cherry-pick --continue' し、本スクリプトを再実行してください。`,
+				"cherry-pick コンフリクト。解決後 'git add -A && git cherry-pick --continue' を実行し、再実行してください。",
 			);
-		}
+		});
 	}
 }
-
 async function applySquash(topic: string) {
-	// 共通点から topic 側に差分が無ければスキップ
 	const common = await mergeBase("HEAD", topic);
-	try {
-		await git(["diff", "--quiet", `${common}..${topic}`, "--"], true);
-		console.log(`  • skip (no diff to squash): ${topic}`);
+	const diff = await run(
+		"git",
+		["diff", "--quiet", `${common}..${topic}`, "--"],
+		true,
+	);
+	if (diff.code === 0) {
+		console.log(`  • skip (no diff): ${topic}`);
 		return;
-	} catch {
-		// 差分あり → 続行
 	}
-
-	console.log(`  • merge --squash ${topic}`);
-	const res = await run("git", ["merge", "--squash", "--no-commit", topic], {
-		quiet: false,
-	});
-	if (res.code !== 0) {
+	const m = await run("git", ["merge", "--squash", "--no-commit", topic]);
+	if (m.code !== 0)
 		throw new Error(
-			`squash 中にコンフリクト。解決後に 'git commit'（1コミットにまとめる）し、本スクリプトを再実行してください。`,
+			"squash コンフリクト。解決後 'git commit' して再実行してください。",
 		);
-	}
-
-	const label = topicLabel(topic);
-	const headSubject = await git(["log", "-1", "--pretty=%s", topic], true);
-	const subject = `${SQUASH_PREFIX}(${label}): ${headSubject}`;
-
-	let body = `Squashed from '${topic}'`;
-	if (SQUASH_LIST_COMMITS) {
-		const b = await mergeBase(topic, BASE_REF);
-		const lines = await git(
-			[
-				"log",
-				"--oneline",
-				"--no-decorate",
-				"--ancestry-path",
-				`${b}..${topic}`,
-			],
-			true,
-		);
-		body += `${EOL}${EOL}Included commits:${EOL}${lines
-			.split("\n")
-			.filter(Boolean)
-			.map((l) => ` - ${l}`)
-			.join(EOL)}`;
-	}
-
-	await git(["commit", "-m", subject, "-m", body]);
+	const headSubj = await git(["log", "-1", "--pretty=%s", topic], true);
+	await git([
+		"commit",
+		"-m",
+		`squash(${topic.split("/").pop() ?? topic}): ${headSubj}`,
+		"-m",
+		`Squashed from '${topic}'`,
+	]);
 }
 
-// ================== メイン ==================
+async function vendorToolRepo() {
+	if (!TOOL_REPO) {
+		console.log("ℹ TOOL_REPO が未指定なのでスキップ（./tiramiss は触らない）");
+		return false;
+	}
+	const target = TOOL_DIR;
+	// 既存の ./tiramiss を一旦消す（ワークツリー汚染を避ける）
+	if (existsSync(target)) {
+		console.log(`  • remove existing ./${target}`);
+		rmSync(target, { recursive: true, force: true });
+		await git(["add", "-A", target]); // 削除をステージ
+	}
 
-async function main() {
-	console.log("▶ 前提チェック");
-	await ensureCleanWorkingTree();
+	console.log(`  • clone ${TOOL_REPO}@${TOOL_REF} -> ./${target}`);
+	// git clone --depth=1 --branch <TOOL_REF> が理想だが、コミット/タグ/ブランチに柔軟対応するためにクローン後 checkout
+	const r1 = await run("git", ["clone", "--depth=1", TOOL_REPO, target], true);
+	if (r1.code !== 0) throw new Error(`clone failed: ${r1.err}`);
+	// checkout ref
+	const r2 = await run(
+		"git",
+		["-C", target, "fetch", "--depth=1", "origin", TOOL_REF],
+		true,
+	);
+	if (r2.code === 0) {
+		await git(["-C", target, "checkout", "FETCH_HEAD"], true);
+	} else {
+		// ブランチ名で shallow clone できている可能性あり。失敗しても致命ではないので続行。
+	}
+	// ネストした .git を除去（ベンダリング）
+	console.log("  • remove nested .git (vendoring)");
+	rmSync(join(target, ".git"), { recursive: true, force: true });
 
+	// 追加をステージ & コミット
+	await git(["add", "-A", target]);
+	if (!(await gitOk(["diff", "--cached", "--quiet"]))) {
+		await git([
+			"commit",
+			"-m",
+			`ops: vendor ${target} from ${TOOL_REPO}@${TOOL_REF}`,
+		]);
+		return true;
+	}
+	console.log("  • no changes to commit for vendored tool repo");
+	return false;
+}
+
+(async () => {
+	await ensureClean();
 	console.log("▶ fetch --all --prune");
 	await git(["fetch", "--all", "--prune"]);
 
-	console.log(`▶ ベースを確認: ${BASE_REF}`);
-	const baseCommit = await revParseCommit(BASE_REF);
-	console.log(`   BASE = ${BASE_REF} @ ${baseCommit}`);
-
-	// 統合ブランチ準備（毎回 BASE に作り直し）
-	if (await showRefLocalBranch(INTEGRATE_BRANCH)) {
-		await git(["switch", INTEGRATE_BRANCH]);
-		await git(["reset", "--hard", baseCommit]);
+	// 1) develop-working を作成 / リセット
+	const base = await rev(BASE_REF);
+	console.log(`BASE: ${BASE_REF} @ ${base}`);
+	if (await localBranchExists(WORKING_BRANCH)) {
+		await git(["switch", WORKING_BRANCH]);
+		await git(["reset", "--hard", base]);
 	} else {
-		await git(["switch", "-C", INTEGRATE_BRANCH, baseCommit]);
+		await git(["switch", "-C", WORKING_BRANCH, base]);
 	}
 
-	console.log(
-		`▶ INTEG : ${INTEGRATE_BRANCH} @ ${await revParseCommit("HEAD")}`,
-	);
-	console.log(`▶ MODE  : ${MODE}`);
+	// 2) ./tiramiss に別リポの内容をクローン（ベンダリング）
+	console.log(`▶ vendor tool repo into ./${TOOL_DIR}`);
+	const changed = await vendorToolRepo();
 
-	const topics = await readTopics(TOPICS_FILE);
-	if (topics.length === 0) {
+	// 3) develop-working を push（変更があれば）
+	if (
+		PUSH &&
+		(changed || !(await remoteBranchExists(`origin/${WORKING_BRANCH}`)))
+	) {
+		console.log("▶ push develop-working");
+		await git(["push", "-u", "origin", WORKING_BRANCH]);
+	} else if (PUSH && changed) {
+		await git(["push", "origin", WORKING_BRANCH]);
+	}
+
+	// 4) tiramiss を作成/更新（develop-working の先頭から）
+	const workingHead = await rev("HEAD");
+	if (await localBranchExists(INTEG_BRANCH)) {
+		await git(["switch", INTEG_BRANCH]);
+		await git(["reset", "--hard", workingHead]);
+	} else {
+		await git(["switch", "-C", INTEG_BRANCH, workingHead]);
+	}
+
+	// 5) topics を適用
+	const { path: topicsPath, items: topics } = readTopics();
+	if (!topicsPath) {
 		console.log(
-			`ℹ ${TOPICS_FILE} が見つからないか、適用対象がありません。ベースだけ反映して終了します。`,
+			"ℹ topics.txt が見つかりません。./tiramiss を載せただけで終了します。",
 		);
-		return;
-	}
-
-	console.log(`▶ topics from ${TOPICS_FILE}`);
-	for (const raw of topics) {
-		let topic = raw;
-		const resolved = await resolveTopicRef(topic);
-		if (resolved !== topic) {
-			console.log(`  • resolve ${topic} -> ${resolved}`);
-			topic = resolved;
-		}
-
-		switch (MODE) {
-			case "merge":
-				await applyMerge(topic);
-				break;
-			case "pick":
-				await applyPick(topic);
-				break;
-			case "squash":
-				await applySquash(topic);
-				break;
-			default:
-				throw new Error(`不正な MODE: ${MODE}（merge|pick|squash）`);
+	} else {
+		console.log(
+			`▶ apply topics (${MODE}) from ${topicsPath}: ${topics.length} entries`,
+		);
+		for (const raw of topics) {
+			const topic = await resolveTopicRef(raw);
+			console.log(`  • ${topic}`);
+			if (MODE === "merge") await applyMerge(topic);
+			else if (MODE === "pick") await applyPick(topic, BASE_REF);
+			else await applySquash(topic);
 		}
 	}
 
-	const headShort = await git(["rev-parse", "--short", "HEAD"], true);
-	console.log(`✔ 完了: ${headShort} on ${INTEGRATE_BRANCH}`);
-}
+	// 6) tiramiss を push
+	if (PUSH) {
+		if (!(await remoteBranchExists(`origin/${INTEG_BRANCH}`)))
+			await git(["push", "-u", "origin", INTEG_BRANCH]);
+		else await git(["push", "origin", INTEG_BRANCH]);
+	}
 
-main().catch((err) => {
-	console.error(
-		`✖ エラー: ${err instanceof Error ? err.message : String(err)}`,
-	);
+	console.log("✔ pipeline done");
+})().catch((e) => {
+	console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
 	process.exit(1);
 });
