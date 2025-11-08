@@ -71,7 +71,7 @@ const argv = yargs(hideBin(process.argv))
 	})
 	.option("toolDir", {
 		type: "string",
-		default: process.env.TOOL_DIR ?? "./",
+		default: process.env.TOOL_DIR ?? ".",
 		describe: "Target directory for vendored tool repo",
 	})
 	.option("push", {
@@ -240,18 +240,18 @@ async function applySquash(topic: string) {
 
 async function vendorToolRepo() {
 	if (!TOOL_REPO) {
-		console.log("ℹ TOOL_REPO が未指定なのでスキップ（./tiramiss は触らない）");
+		console.log(`ℹ TOOL_REPO が未指定なのでスキップ（${TOOL_DIR} は触らない）`);
 		return false;
 	}
 	const target = TOOL_DIR;
-	// 既存の ./tiramiss を一旦消す（ワークツリー汚染を避ける）
+	// 既存の target を一旦消す（ワークツリー汚染を避ける）
 	if (existsSync(target)) {
-		console.log(`  • remove existing ./${target}`);
+		console.log(`  • remove existing ${target}`);
 		rmSync(target, { recursive: true, force: true });
 		await git(["add", "-A", target]); // 削除をステージ
 	}
 
-	console.log(`  • clone ${TOOL_REPO}@${TOOL_REF} -> ./${target}`);
+	console.log(`  • clone ${TOOL_REPO}@${TOOL_REF} -> ${target}`);
 	// git clone --depth=1 --branch <TOOL_REF> が理想だが、コミット/タグ/ブランチに柔軟対応するためにクローン後 checkout
 	const r1 = await run(
 		"git",
