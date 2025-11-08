@@ -319,7 +319,9 @@ async function vendorToolRepo() {
 		console.log("▶ push develop-working");
 		await git(["push", "-u", "origin", WORKING_BRANCH]);
 	} else if (PUSH && changed) {
-		await git(["push", "origin", WORKING_BRANCH]);
+		// 作業ブランチが再構築されているはずなので強制プッシュが必要
+		console.log("▶ force push develop-working");
+		await git(["push", "--force", "origin", WORKING_BRANCH]);
 	}
 
 	// 4) tiramiss を作成/更新（develop-working の先頭から）
