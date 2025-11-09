@@ -20,6 +20,7 @@
  */
 
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import yargs from "yargs";
@@ -243,53 +244,67 @@ async function vendorToolRepo() {
 		console.log(`ℹ TOOL_REPO が未指定なのでスキップ（${TOOL_DIR} は触らない）`);
 		return false;
 	}
-	const target = TOOL_DIR;
-	// 既存の target を一旦消す（ワークツリー汚染を避ける）
-	if (existsSync(target)) {
-		console.log(`  • remove existing ${target}/*`);
-		rmSync(`${target}/*`, { recursive: true, force: true });
-		await git(["add", "-A", target]); // 削除をステージ
-	}
 
-	console.log(`  • clone ${TOOL_REPO}@${TOOL_REF} -> ${target}`);
-	// git clone --depth=1 --branch <TOOL_REF> が理想だが、コミット/タグ/ブランチに柔軟対応するためにクローン後 checkout
-	const r1 = await run(
-		"git",
-		["clone", "--depth=1", TOOL_REPO, target],
-		null,
-		true,
-	);
-	if (r1.code !== 0) throw new Error(`clone failed: ${r1.err}`);
-	// checkout ref
-	const r2 = await run(
-		"git",
-		["-C", target, "fetch", "--depth=1", "origin", TOOL_REF],
-		null,
-		true,
-	);
-	if (r2.code === 0) {
-		await git(["-C", target, "checkout", "FETCH_HEAD"], true);
-	} else {
-		// ブランチ名で shallow clone できている可能性あり。失敗しても致命ではないので続行。
-	}
-	// ネストした .git を除去（ベンダリング）
-	console.log("  • remove nested .git (vendoring)");
-	rmSync(join(target, ".git"), { recursive: true, force: true });
+	const working = fs.mkdtempSync("/tmp/tiramiss-");
 
-	await run("pnpm", ["install", "--frozen-lockfile"], target);
+	try {
+		console.log(`  • clone ${TOOL_REPO}@${TOOL_REF} -> ${working}`);
+		// git clone --depth=1 --branch <TOOL_REF> が理想だが、コミット/タグ/ブランチに柔軟対応するためにクローン後 checkout
+		const r1 = await run(
+			"git",
+			["clone", "--depth=1", TOOL_REPO, working],
+			null,
+			true,
+		);
+		if (r1.code !== 0) throw new Error(`clone failed: ${r1.err}`);
 
-	// 追加をステージ & コミット
-	await git(["add", "-A", target]);
-	if (!(await gitOk(["diff", "--cached", "--quiet"]))) {
-		await git([
-			"commit",
-			"-m",
-			`ops: vendor ${target} from ${TOOL_REPO}@${TOOL_REF}`,
-		]);
-		return true;
+		// checkout ref
+		const r2 = await run(
+			"git",
+			["-C", working, "fetch", "--depth=1", "origin", TOOL_REF],
+			null,
+			true,
+		);
+
+		if (r2.code === 0) {
+			await git(["-C", working, "checkout", "FETCH_HEAD"], true);
+		} else {
+			// ブランチ名で shallow clone できている可能性あり。失敗しても致命ではないので続行。
+		}
+
+		// ネストした .git を除去（ベンダリング）
+		console.log("  • remove nested .git (vendoring)");
+		rmSync(join(working, ".git"), { recursive: true, force: true });
+
+		// -----------------------------------------------------------------------
+
+		// 既存の target を一旦消す（ワークツリー汚染を避ける）
+		const target = TOOL_DIR;
+		if (existsSync(target)) {
+			console.log(`  • remove existing ${target}/*`);
+			rmSync(`${target}/*`, { recursive: true, force: true });
+			await git(["add", "-A", target]); // 削除をステージ
+		}
+
+		fs.copyFileSync(`${working}/*`, target);
+		await run("pnpm", ["install", "--frozen-lockfile"], target);
+
+		// 追加をステージ & コミット
+		await git(["add", "-A", target]);
+		if (!(await gitOk(["diff", "--cached", "--quiet"]))) {
+			await git([
+				"commit",
+				"-m",
+				`ops: vendor ${target} from ${TOOL_REPO}@${TOOL_REF}`,
+			]);
+			return true;
+		}
+
+		console.log("  • no changes to commit for vendored tool repo");
+		return false;
+	} finally {
+		rmSync(working, { recursive: true, force: true });
 	}
-	console.log("  • no changes to commit for vendored tool repo");
-	return false;
 }
 
 (async () => {
