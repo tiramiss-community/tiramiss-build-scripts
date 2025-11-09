@@ -1,0 +1,61 @@
+name: rebuild-working-branch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop-working
+        uses: actions/checkout@v4
+        with:
+          ref: develop-working
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebuild working branch
+        env:
+          CI: true
+        run: pnpm run rebase-working
+
+      - name: Generate topics list
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run issue-to-topics -- --token "$GITHUB_TOKEN"
+
+      - name: Copy workflows to .github/workflows
+        run: |
+          mkdir -p .github/workflows
+          cp -a workflows/. .github/workflows/
+
+      - name: Commit topics and workflows
+        run: |
+          git add topics.txt .github/workflows
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "ci: update workflows and topics"
+            git push origin develop-working
+          fi

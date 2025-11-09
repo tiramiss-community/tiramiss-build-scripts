@@ -1,0 +1,44 @@
+name: sync-upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 JST = 18:00 UTC (previous day)
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop-working
+        uses: actions/checkout@v4
+        with:
+          ref: develop-working
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync upstream
+        env:
+          CI: true
+        run: pnpm run sync-upstream

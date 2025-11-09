@@ -187,7 +187,7 @@ async function applySquash(topic: string) {
     if (!(await remoteBranchExists(`origin/${INTEGRATE_BRANCH}`))) {
       await git(["push", "-u", "origin", INTEGRATE_BRANCH]);
     } else {
-      await git(["push", "origin", INTEGRATE_BRANCH]);
+      await git(["push", "--force", "origin", INTEGRATE_BRANCH]);
     }
   }
 
