@@ -27,12 +27,6 @@ const argv = yargs(hideBin(process.argv))
     default: "topics.txt",
     describe: "Output file path",
   })
-  .option("comments", {
-    alias: "c",
-    type: "boolean",
-    default: false,
-    describe: "Include issue comments",
-  })
   .option("labels", {
     alias: "L",
     type: "string",
@@ -44,7 +38,7 @@ const argv = yargs(hideBin(process.argv))
   .parseSync();
 
 async function main() {
-  const { token, repo, issue, output, comments, labels } = argv;
+  const { token, repo, issue, output, labels } = argv;
   const [owner, name] = repo.split("/");
   if (!owner || !name) {
     throw new Error("Invalid repo format: expected owner/name");
@@ -60,15 +54,6 @@ async function main() {
   });
 
   let bodyText = issueData.body ?? "";
-
-  if (comments) {
-    console.log("💬 Fetching comments...");
-    const allComments = await octokit.paginate(
-      octokit.rest.issues.listComments,
-      { owner, repo: name, issue_number: issue, per_page: 100 },
-    );
-    for (const c of allComments) bodyText += `\n${c.body ?? ""}`;
-  }
 
   // 箇条書き抽出 + PR番号収集（1行につき最初の1つのみ。#123 または PR URL を認識）
   const prNumbers = new Set<number>();
