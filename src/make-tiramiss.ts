@@ -345,22 +345,22 @@ async function vendorToolRepo() {
 		}
 	}
 
-	// 4) tiramiss を作成/更新（develop-working の先頭から）
-	const workingHead = await rev("HEAD");
-	if (await localBranchExists(INTEGRATE_BRANCH)) {
-		await git(["switch", INTEGRATE_BRANCH]);
-		await git(["reset", "--hard", workingHead]);
-	} else {
-		await git(["switch", "-C", INTEGRATE_BRANCH, workingHead]);
-	}
-
-	// 5) topics を適用
 	const { path: topicsPath, items: topics } = readTopics();
 	if (!topicsPath) {
 		console.log(
 			"ℹ topics.txt が見つかりません。./tiramiss を載せただけで終了します。",
 		);
 	} else {
+		// 4) tiramiss を作成/更新（develop-working の先頭から）
+		const workingHead = await rev("HEAD");
+		if (await localBranchExists(INTEGRATE_BRANCH)) {
+			await git(["switch", INTEGRATE_BRANCH]);
+			await git(["reset", "--hard", workingHead]);
+		} else {
+			await git(["switch", "-C", INTEGRATE_BRANCH, workingHead]);
+		}
+
+		// 5) topics を適用
 		console.log(
 			`▶ apply topics (${MODE}) from ${topicsPath}: ${topics.length} entries`,
 		);
@@ -371,14 +371,14 @@ async function vendorToolRepo() {
 			else if (MODE === "pick") await applyPick(topic, BASE_REF);
 			else await applySquash(topic);
 		}
-	}
 
-	// 6) tiramiss を push
-	if (PUSH) {
-		if (!(await remoteBranchExists(`origin/${INTEGRATE_BRANCH}`))) {
-			await git(["push", "-u", "origin", INTEGRATE_BRANCH]);
-		} else {
-			await git(["push", "origin", INTEGRATE_BRANCH]);
+		// 6) tiramiss を push
+		if (PUSH) {
+			if (!(await remoteBranchExists(`origin/${INTEGRATE_BRANCH}`))) {
+				await git(["push", "-u", "origin", INTEGRATE_BRANCH]);
+			} else {
+				await git(["push", "origin", INTEGRATE_BRANCH]);
+			}
 		}
 	}
 
