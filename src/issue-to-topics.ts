@@ -63,25 +63,37 @@ async function main() {
     for (const c of allComments) bodyText += `\n${c.body ?? ""}`;
   }
 
-  // 箇条書き抽出 + PR番号収集
+  // 箇条書き抽出 + PR番号収集（1行につき最初の1つのみ。#123 または PR URL を認識）
   const prNumbers = new Set<number>();
   const lines = bodyText.split(/\r?\n/);
   for (const line of lines) {
     const bulletMatch = line.match(/^\s*[-*]\s+(.*)$/);
-    if (!bulletMatch) {
-      continue;
+    if (!bulletMatch) continue;
+
+    const raw = bulletMatch[1].trim();
+
+    // #123 と PR URL の両方を検出し、行内で早く現れた方を採用
+    const urlRe =
+      /https?:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/(\d+)/;
+    const hashRe = /#(\d+)/;
+
+    const urlMatch = urlRe.exec(raw);
+    const hashMatch = hashRe.exec(raw);
+
+    let chosen: number | null = null;
+    if (urlMatch && hashMatch) {
+      chosen =
+        urlMatch.index < hashMatch.index
+          ? Number(urlMatch[1])
+          : Number(hashMatch[1]);
+    } else if (urlMatch) {
+      chosen = Number(urlMatch[1]);
+    } else if (hashMatch) {
+      chosen = Number(hashMatch[1]);
     }
 
-    // 行内に含まれる全PR番号
-    const raw = bulletMatch[1].trim();
-    const matches = raw.match(/#(\d+)/g);
-    if (matches) {
-      for (const m of matches) {
-        const num = Number(m.slice(1));
-        if (!Number.isNaN(num)) {
-          prNumbers.add(num);
-        }
-      }
+    if (chosen != null && Number.isFinite(chosen)) {
+      prNumbers.add(chosen);
     }
   }
 
