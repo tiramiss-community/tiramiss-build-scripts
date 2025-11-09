@@ -334,16 +334,15 @@ async function vendorToolRepo() {
 	const changed = await vendorToolRepo();
 
 	// 3) develop-working を push（変更があれば）
-	if (
-		PUSH &&
-		(changed || !(await remoteBranchExists(`origin/${WORKING_BRANCH}`)))
-	) {
-		console.log("▶ push develop-working");
-		await git(["push", "-u", "origin", WORKING_BRANCH]);
-	} else if (PUSH && changed) {
-		// 作業ブランチが再構築されているはずなので強制プッシュが必要
-		console.log("▶ force push develop-working");
-		await git(["push", "--force", "origin", WORKING_BRANCH]);
+	if (PUSH && changed) {
+		if (!(await remoteBranchExists(`origin/${WORKING_BRANCH}`))) {
+			console.log("▶ push develop-working");
+			await git(["push", "-u", "origin", WORKING_BRANCH]);
+		} else if (changed) {
+			// 作業ブランチが再構築されているはずなので強制プッシュが必要
+			console.log("▶ force push develop-working");
+			await git(["push", "--force", "origin", WORKING_BRANCH]);
+		}
 	}
 
 	// 4) tiramiss を作成/更新（develop-working の先頭から）
