@@ -71,8 +71,8 @@ async function ensureUpstreamRemote() {
 }
 
 async function fetchUpstream() {
-  console.log(`▶ fetch --prune ${UPSTREAM_REMOTE}`);
-  await git(["fetch", "--prune", UPSTREAM_REMOTE]);
+  console.log(`▶ fetch --prune --no-tags ${UPSTREAM_REMOTE}`);
+  await git(["fetch", "--prune", "--no-tags", UPSTREAM_REMOTE]);
 
   console.log(
     `▶ fetch tags ${UPSTREAM_REMOTE} refs/tags/* -> ${UPSTREAM_TAG_NAMESPACE}/*`,
