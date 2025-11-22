@@ -80,6 +80,7 @@ async function fetchUpstream() {
   await git([
     "fetch",
     "--prune",
+    "--no-tags",
     UPSTREAM_REMOTE,
     `refs/tags/*:${UPSTREAM_TAG_NAMESPACE}/*`,
   ]);
