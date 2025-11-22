@@ -28,11 +28,24 @@ jobs:
             if (data.permission !== "admin") {
               core.setFailed(`このワークフローはリポジトリ管理者のみ実行できます (権限: ${data.permission}).`);
             }
+
+      # 通常のGITHUB_TOKENではワークフローの更新ができないため、専用のGitHubAppトークンを使用する
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        env:
+          APP_ID: ${{ secrets.WORKFLOW_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.WORKFLOW_APP_KEY }}
+        with:
+          app-id: ${{ env.APP_ID }}
+          private-key: ${{ env.APP_PRIVATE_KEY }}
+          repositories: tiramiss
+
       - name: Checkout develop-working
         uses: actions/checkout@v4
         with:
           ref: develop-working
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4.2.0
@@ -62,29 +75,18 @@ jobs:
       - name: Generate topics list
         working-directory: .tiramiss
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: pnpm run issue-to-topics -- --token "$GITHUB_TOKEN"
 
       - name: Copy workflows to .github/workflows
         working-directory: .tiramiss
         run: |
-          mkdir -p ../github/workflows
+          mkdir -p ../.github/workflows
           cp -a workflows/. ../.github/workflows/
-
-      - uses: actions/create-github-app-token@v1
-        id: app-token
-        env:
-          APP_ID: ${{ secrets.WORKFLOW_APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.WORKFLOW_APP_KEY }}
-        with:
-          app-id: ${{ env.APP_ID }}
-          private-key: ${{ env.APP_PRIVATE_KEY }}
-          repositories: tiramiss
 
       - name: Commit topics and workflows
         working-directory: .tiramiss
         env:
-          # 通常のGITHUB_TOKENではワークフローの更新ができないため、専用のGitHubAppトークンを使用する
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git add topics.txt ../.github/workflows
