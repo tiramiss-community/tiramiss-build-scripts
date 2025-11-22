@@ -21,6 +21,12 @@ const argv = yargs(hideBin(process.argv))
     default: process.env.BASE_REF ?? "origin/develop-upstream",
     describe: "Base reference used to reset working branch",
   })
+  .option("baseTag", {
+    type: "string",
+    default: process.env.BASE_TAG,
+    describe:
+      "Optional tag name to pin baseRef (must exist on develop-upstream)",
+  })
   .option("workingBranch", {
     type: "string",
     default: process.env.WORKING_BRANCH ?? "develop-working",
@@ -52,11 +58,34 @@ const argv = yargs(hideBin(process.argv))
   .parseSync(); // as unknown as CliArgs;
 
 const BASE_REF = argv.baseRef;
+const BASE_TAG =
+  typeof argv.baseTag === "string" && argv.baseTag.trim()
+    ? argv.baseTag.trim()
+    : undefined;
 const WORKING_BRANCH = argv.workingBranch;
 const TOOL_REPO = argv.toolRepo;
 const TOOL_REF = argv.toolRef;
 const TOOL_DIR = argv.toolDir;
 const PUSH = argv.push;
+
+async function resolveBaseCommit() {
+  const branchHead = await rev(BASE_REF);
+  if (!BASE_TAG) {
+    return { label: BASE_REF, commit: branchHead };
+  }
+
+  const tagCommit = await rev(BASE_TAG);
+  if (!(await gitOk(["merge-base", "--is-ancestor", tagCommit, branchHead]))) {
+    throw new Error(
+      `指定したタグ ${BASE_TAG} は ${BASE_REF} 上に存在しません。タグは develop-upstream の履歴上にある必要があります。`,
+    );
+  }
+
+  return {
+    label: `${BASE_REF} (tag ${BASE_TAG})`,
+    commit: tagCommit,
+  };
+}
 
 async function vendorToolRepo() {
   if (!TOOL_REPO) {
@@ -137,17 +166,17 @@ async function vendorToolRepo() {
 (async () => {
   await ensureClean();
 
-  console.log("▶ fetch --all --prune");
-  await git(["fetch", "--all", "--prune"]);
+  console.log("▶ fetch --all --prune --tags");
+  await git(["fetch", "--all", "--prune", "--tags"]);
 
   // WORKING_BRANCH を作成 / リセット
-  const base = await rev(BASE_REF);
-  console.log(`BASE: ${BASE_REF} @ ${base}`);
+  const baseInfo = await resolveBaseCommit();
+  console.log(`BASE: ${baseInfo.label} @ ${baseInfo.commit}`);
   if (await localBranchExists(WORKING_BRANCH)) {
     await git(["switch", WORKING_BRANCH]);
-    await git(["reset", "--hard", base]);
+    await git(["reset", "--hard", baseInfo.commit]);
   } else {
-    await git(["switch", "-C", WORKING_BRANCH, base]);
+    await git(["switch", "-C", WORKING_BRANCH, baseInfo.commit]);
   }
 
   // TOOL_DIR に別リポの内容をクローン（ベンダリング）

@@ -2,6 +2,11 @@ name: rebuild-working-branch
 
 on:
   workflow_dispatch:
+    inputs:
+      base_tag:
+        description: "develop-upstream 上のタグ名 (任意)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -38,6 +43,7 @@ jobs:
         working-directory: .tiramiss
         env:
           CI: true
+          BASE_TAG: ${{ inputs.base_tag }}
         run: pnpm run rebase-working
 
       - name: Generate topics list

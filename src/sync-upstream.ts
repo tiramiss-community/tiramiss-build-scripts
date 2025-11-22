@@ -57,8 +57,8 @@ async function ensureUpstreamRemote() {
 }
 
 async function fetchUpstream() {
-  console.log(`▶ fetch --prune ${UPSTREAM_REMOTE}`);
-  await git(["fetch", "--prune", UPSTREAM_REMOTE]);
+  console.log(`▶ fetch --prune --tags ${UPSTREAM_REMOTE}`);
+  await git(["fetch", "--prune", "--tags", UPSTREAM_REMOTE]);
 }
 
 async function ensureTargetBranch() {
